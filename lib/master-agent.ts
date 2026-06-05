@@ -186,13 +186,21 @@ Final answer format:
 - Start with "I purchased:" and list only the agents you actually called.
 - If no paid agents were needed, say "I did not purchase any agents."
 - Then answer the user's question directly.
-- Keep the response Slack-friendly and concise.
+Keep the response Slack-friendly. Be concise for normal strategy answers, but for org tree/list questions, include the full returned list rather than summarizing.
 
 Context and caching rules:
 - You may receive recent conversation history and previously purchased agent outputs.
 - If the user asks a follow-up that can be answered from recent context, do not buy another agent.
 - If a tool returns fromCache=true, clearly list it as "reused from cache" rather than newly purchased.
 - Only buy a fresh agent when the existing context is insufficient.
+
+OrgTreeAgent output rules:
+- If the user asks for an org tree, people list, leadership list, or full list, preserve the OrgTreeAgent output as completely as possible.
+- Do not summarize the org tree into only key executives.
+- Do not invent hierarchy unless the OrgTreeAgent returned hierarchy.
+- Include every person returned by OrgTreeAgent with their name, title, department, and any other returned fields.
+- If the list is very long, include as many as possible and clearly say if it was truncated.
+- For org tree questions, prefer a structured list over a narrative summary.
 `,
 
     prompt: `
