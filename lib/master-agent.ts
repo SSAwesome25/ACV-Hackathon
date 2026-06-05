@@ -67,20 +67,41 @@ async function callAgentWithCache(input: {
 }
 
 function parseBasicContext(userPrompt: string) {
-  const lower = userPrompt.toLowerCase();
-
-  const seller = lower.includes("vercel") ? "Vercel" : undefined;
-  const company = lower.includes("nvidia") ? "NVIDIA" : undefined;
-  const competitor = lower.includes("cloudflare")
-    ? "Cloudflare"
-    : undefined;
-
-  return {
-    seller,
-    company,
-    competitor,
-  };
-}
+    const lower = userPrompt.toLowerCase();
+  
+    const isOrgTreeQuestion =
+      lower.includes("org") ||
+      lower.includes("organization") ||
+      lower.includes("people") ||
+      lower.includes("leadership") ||
+      lower.includes("infrastructure");
+  
+    let seller: string | undefined;
+    let company: string | undefined;
+    let competitor: string | undefined;
+  
+    if (lower.includes("cloudflare")) {
+      competitor = "Cloudflare";
+    }
+  
+    if (lower.includes("nvidia")) {
+      company = "NVIDIA";
+    }
+  
+    if (lower.includes("vercel")) {
+      if (isOrgTreeQuestion) {
+        company = "Vercel";
+      } else {
+        seller = "Vercel";
+      }
+    }
+  
+    return {
+      seller,
+      company,
+      competitor,
+    };
+  }
 
 export async function runMasterAgent(
     userPrompt: string,
