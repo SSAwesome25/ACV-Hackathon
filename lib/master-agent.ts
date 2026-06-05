@@ -1,38 +1,263 @@
-export async function runMasterAgent(userPrompt: string): Promise<string> {
-    console.log("Master agent received:", userPrompt);
-  
-    const purchasedAgents = [
-      {
-        name: "OrgChartAgent",
-        price: "$0.02",
-        status: "payment confirmed",
-      },
-      {
-        name: "StakeholderAgent",
-        price: "$0.02",
-        status: "payment confirmed",
-      },
-      {
-        name: "CompetitorAgent",
-        price: "$0.03",
-        status: "payment confirmed",
-      },
-    ];
-  
-    return [
-      "I purchased:",
-      ...purchasedAgents.map(
-        (agent) => `✓ ${agent.name} — ${agent.price} — ${agent.status}`
-      ),
-      "",
-      "Recommended buyers:",
-      "- VP/Director of Web Infrastructure",
-      "- Platform Engineering leadership",
-      "- Developer Experience leadership",
-      "",
-      "Pitch:",
-      "Vercel is strongest where NVIDIA needs fast frontend iteration, preview deployments, Next.js optimization, and developer workflow velocity. Cloudflare remains strong for edge security/CDN, so the best wedge is not “replace everything,” but “move high-velocity marketing/docs/product microsites to Vercel first.”",
-      "",
-      "Note: For demo purposes, this uses public/mock intelligence providers. In production, these MCP providers could connect to TheOrg, LinkedIn-like data, Clearbit/Apollo-like contact data, BuiltWith-like tech-stack data, and internal CRM data.",
-    ].join("\n");
+import { generateText, stepCountIs, tool } from "ai";
+import { openai } from "@ai-sdk/openai";
+import { z } from "zod";
+import { callExternalAgent } from "./external-agent-client";
+import {
+    appendConversationMessage,
+    getConversationState,
+    getCachedAgentResult,
+    setCachedAgentResult,
+    makeAgentFingerprint,
+    AgentName,
+  } from "./context-cache";
+
+
+async function callAgentWithCache(input: {
+  conversationKey: string;
+  agentName: AgentName;
+  company?: string;
+  seller?: string;
+  competitor?: string;
+  originalPrompt: string;
+}) {
+  const fingerprint = makeAgentFingerprint({
+    agentName: input.agentName,
+    company: input.company,
+    seller: input.seller,
+    competitor: input.competitor,
+  });
+
+  const cached = getCachedAgentResult({
+    conversationKey: input.conversationKey,
+    agentName: input.agentName,
+    fingerprint,
+  });
+
+  if (cached) {
+    console.log(`[cache] Reusing ${input.agentName}`);
+
+    return {
+      agentName: input.agentName,
+      fromCache: true,
+      data: cached.data,
+    };
   }
+
+  console.log(`[cache] No cache hit. Purchasing ${input.agentName}`);
+
+  const freshResult = await callExternalAgent(input.agentName, {
+    company: input.company,
+    seller: input.seller,
+    competitor: input.competitor,
+    originalPrompt: input.originalPrompt,
+  });
+
+  setCachedAgentResult({
+    conversationKey: input.conversationKey,
+    agentName: input.agentName,
+    fingerprint,
+    data: freshResult,
+  });
+
+  return {
+    agentName: input.agentName,
+    fromCache: false,
+    data: freshResult,
+  };
+}
+
+function parseBasicContext(userPrompt: string) {
+  const lower = userPrompt.toLowerCase();
+
+  const seller = lower.includes("vercel") ? "Vercel" : undefined;
+  const company = lower.includes("nvidia") ? "NVIDIA" : undefined;
+  const competitor = lower.includes("cloudflare")
+    ? "Cloudflare"
+    : undefined;
+
+  return {
+    seller,
+    company,
+    competitor,
+  };
+}
+
+export async function runMasterAgent(
+    userPrompt: string,
+    conversationKey: string
+  ): Promise<string> {
+  const parsed = parseBasicContext(userPrompt);
+
+  const conversationState = getConversationState(conversationKey);
+    appendConversationMessage(conversationKey, "user", userPrompt);
+
+  console.log("[master] Slack prompt:", userPrompt);
+  console.log("[master] Parsed context:", parsed);
+
+  const result = await generateText({
+    model: openai("gpt-4o-mini"),
+
+    /**
+     * Allows the model to:
+     * 1. Think about which tool to call
+     * 2. Call one or more agents
+     * 3. Read the results
+     * 4. Produce the final answer
+     */
+    stopWhen: stepCountIs(5),
+
+    system: `
+You are GTM Agent Broker, a master sales agent inside Slack.
+
+Your job is to efficiently decide which specialist subagents to purchase/call.
+
+Available paid subagents:
+
+1. OrgTreeAgent
+Use when the user asks about:
+- org chart
+- decision makers
+- company leadership structure
+- who reports to whom
+- which department owns a buying decision
+- "who should we contact at X?"
+
+Cost: $0.02
+
+2. StakeholderAgent
+Use when the user asks about:
+- buyer personas
+- likely stakeholders
+- champions
+- economic buyers
+- technical buyers
+- personas for a GTM motion
+- who would care about the product
+
+Cost: $0.02
+
+3. CompetitorAgent
+Use when the user asks about:
+- Vercel vs Cloudflare
+- competitor comparison
+- replacement pitch
+- tradeoffs
+- objection handling
+- why one product wins over another
+- migration wedge
+- positioning against an incumbent
+
+Cost: $0.03
+
+Efficiency rules:
+- Do NOT call every agent by default.
+- Only call agents that add relevant information.
+- If the user asks a simple greeting or clarification, call no paid agents.
+- If the user asks for "Vercel vs Cloudflare", usually call CompetitorAgent.
+- If the user asks "who should we sell to", usually call StakeholderAgent.
+- If the user asks for actual org structure or decision-maker mapping, call OrgTreeAgent.
+- If the user asks for a full sales pitch to a company against a competitor, call CompetitorAgent and StakeholderAgent.
+- Only call OrgTreeAgent for a full pitch if org structure or decision makers are needed.
+- Never claim you know the company's actual contracts or internal org.
+- Say that demo intelligence may be public/mock intelligence.
+
+Final answer format:
+- Start with "I purchased:" and list only the agents you actually called.
+- If no paid agents were needed, say "I did not purchase any agents."
+- Then answer the user's question directly.
+- Keep the response Slack-friendly and concise.
+
+Context and caching rules:
+- You may receive recent conversation history and previously purchased agent outputs.
+- If the user asks a follow-up that can be answered from recent context, do not buy another agent.
+- If a tool returns fromCache=true, clearly list it as "reused from cache" rather than newly purchased.
+- Only buy a fresh agent when the existing context is insufficient.
+`,
+
+    prompt: `
+Slack user request:
+${userPrompt}
+
+Known parsed context:
+${JSON.stringify(parsed, null, 2)}
+
+Recent conversation in this Slack thread:
+${JSON.stringify(conversationState.messages, null, 2)}
+
+Decide which subagents are worth buying. Call only the useful ones. Then produce the final Slack answer.
+`,
+
+    tools: {
+      buyOrgTreeAgent: tool({
+        description:
+          "Purchases OrgTreeAgent for rough public/mock org structure, decision-maker mapping, and company leadership structure.",
+        inputSchema: z.object({
+          company: z
+            .string()
+            .describe("The target company, for example NVIDIA."),
+        }),
+        execute: async ({ company }) => {
+            return callAgentWithCache({
+                conversationKey,
+                agentName: "OrgTreeAgent",
+                company,
+                seller: parsed.seller,
+                competitor: parsed.competitor,
+                originalPrompt: userPrompt,
+              });
+        },
+      }),
+
+      buyStakeholderAgent: tool({
+        description:
+          "Purchases StakeholderAgent to identify likely buyer personas, champions, economic buyers, technical buyers, and GTM stakeholders.",
+        inputSchema: z.object({
+          company: z
+            .string()
+            .describe("The target company, for example NVIDIA."),
+          seller: z
+            .string()
+            .describe("The company or product being sold, for example Vercel."),
+        }),
+        execute: async ({ company, seller }) => {
+            return callAgentWithCache({
+                conversationKey,
+                agentName: "StakeholderAgent",
+                company,
+                seller,
+                competitor: parsed.competitor,
+                originalPrompt: userPrompt,
+              });
+        },
+      }),
+
+      buyCompetitorAgent: tool({
+        description:
+          "Purchases CompetitorAgent to compare seller vs competitor, explain tradeoffs, generate positioning, and find a sales wedge.",
+        inputSchema: z.object({
+          seller: z
+            .string()
+            .describe("The seller product/company, for example Vercel."),
+          competitor: z
+            .string()
+            .describe("The competitor or incumbent, for example Cloudflare."),
+          company: z
+            .string()
+            .describe("The target customer company, for example NVIDIA."),
+        }),
+        execute: async ({ seller, competitor, company }) => {
+            return callAgentWithCache({
+                conversationKey,
+                agentName: "CompetitorAgent",
+                company,
+                seller,
+                competitor,
+                originalPrompt: userPrompt,
+              });
+        },
+      }),
+    },
+  });
+  appendConversationMessage(conversationKey, "assistant", result.text);
+  return result.text;
+}

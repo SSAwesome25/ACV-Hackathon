@@ -19,11 +19,13 @@ app.event("app_mention", async ({ event, client }) => {
     text?: string;
     channel: string;
     ts: string;
+    thread_ts?: string
   };
 
   try {
     const channel = slackEvent.channel;
-    const threadTs = slackEvent.ts;
+    const threadTs = slackEvent.thread_ts || slackEvent.ts;
+    const conversationKey = `${channel}:${threadTs}`;
 
     const userPrompt = (slackEvent.text || "")
       .replace(/<@[^>]+>/g, "")
@@ -35,7 +37,7 @@ app.event("app_mention", async ({ event, client }) => {
       text: "Buying GTM intelligence agents now...",
     });
 
-    const finalAnswer = await runMasterAgent(userPrompt);
+    const finalAnswer = await runMasterAgent(userPrompt, conversationKey);
 
     await client.chat.postMessage({
       channel,
