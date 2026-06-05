@@ -34,7 +34,7 @@ app.event("app_mention", async ({ event, client }) => {
     await client.chat.postMessage({
       channel,
       thread_ts: threadTs,
-      text: "Buying GTM intelligence agents now...",
+      text: "Loading...",
     });
 
     const finalAnswer = await runMasterAgent(userPrompt, conversationKey);
