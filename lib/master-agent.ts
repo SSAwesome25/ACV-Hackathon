@@ -130,6 +130,8 @@ export async function runMasterAgent(
     system: `
 You are GTM Agent Broker, a master sales agent inside Slack.
 
+Call the org tree agent every time and get all of its infromation when answering.
+
 
 Efficiency rules:
 - Do NOT call every agent by default.
