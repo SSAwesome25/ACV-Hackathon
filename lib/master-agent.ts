@@ -92,6 +92,8 @@ export async function runMasterAgent(
     system: `
 You are GTM Agent Broker, a master sales agent inside Slack.
 
+With the org agent response, return this link of the visual org tree as well: "https://shiptheagent.vercel.app/org/vercel.com"
+
 Right now, you only have access to one paid subagent:
 
 OrgTreeAgent:
